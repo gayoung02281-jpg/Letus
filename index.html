@@ -7,7 +7,7 @@
 <title>레터스 견적서</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&display=swap');
 
@@ -912,43 +912,12 @@ async function downloadPDF() {
   await new Promise(r => setTimeout(r, 100));
   
   try {
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
-    
-    // Load Korean font (use built-in with unicode support)
-    doc.setFont('helvetica');
-    
     const r = letusResult;
-    const pw = 190; // page width for content
-    const mx = 10;  // margin
-    let y = 15;
-    
-    // Title
-    doc.setFontSize(22);
-    doc.text('견 적 서', 105, y, { align: 'center' });
-    y += 15;
-    
-    // Company info
-    doc.setFontSize(9);
-    doc.text('레터스 (LETUS)', mx, y);
-    doc.text('Tel: 010-5604-4150', mx + pw, y, { align: 'right' });
-    y += 6;
-    doc.text('경기도 용인시 처인구 양지면 남평로 111-73 10층', mx, y);
-    y += 8;
-    
-    // Date line
-    doc.setFontSize(10);
     const today = new Date();
     const dateStr = `${today.getFullYear()}년 ${String(today.getMonth()+1).padStart(2,'0')}월 ${String(today.getDate()).padStart(2,'0')}일`;
-    doc.text(`견적일자: ${dateStr}`, mx, y);
-    y += 8;
     
-    // Customer
-    doc.text(`고객사: ${r.customerName}`, mx, y);
-    y += 10;
-    
-    // Items table
-    const tableData = [];
+    // Build HTML for PDF
+    let itemsHtml = '';
     const catNames = ['자재비', '차량비', '인건비', '옵션'];
     
     for (const catName of catNames) {
@@ -956,103 +925,115 @@ async function downloadPDF() {
       if (items.length === 0) continue;
       
       let subtotal = 0;
+      let first = true;
       for (const item of items) {
         const total = item.isFreeService ? '-' : fmt(item.letusTotal);
         if (!item.isFreeService) subtotal += item.letusTotal;
-        tableData.push([
-          catName === tableData.filter(d => d[0] === catName).length === 0 ? catName : '',
-          item.name,
-          String(item.qty),
-          fmt(item.letusPrice),
-          String(item.days),
-          total,
-        ]);
-        // Fix: set category on first item of each group
-        if (tableData.filter(d => d._cat === catName).length === 0) {
-          tableData[tableData.length - 1][0] = catName;
-        } else {
-          tableData[tableData.length - 1][0] = '';
-        }
-        tableData[tableData.length - 1]._cat = catName;
+        itemsHtml += `<tr>
+          <td>${first ? catName : ''}</td>
+          <td>${item.name}</td>
+          <td class="r">${item.qty}</td>
+          <td class="r">${fmt(item.letusPrice)}</td>
+          <td class="r">${item.days}</td>
+          <td class="r">${total}</td>
+        </tr>`;
+        first = false;
       }
-      tableData.push({ content: ['', catName + ' 소계', '', '', '', fmt(subtotal)], isSubtotal: true, _cat: catName });
+      itemsHtml += `<tr class="sub"><td></td><td>${catName} 소계</td><td></td><td></td><td></td><td class="r">${fmt(subtotal)}</td></tr>`;
     }
     
-    // Add indirect costs
     const c = r.calc;
-    if (c.gonguPct > 0) tableData.push({ content: ['', '공구손료 '+c.gonguPct+'%', '', '', '', fmt(Math.round(c.gongu))], isIndirect: true });
-    tableData.push({ content: ['', '공과잡비 '+c.gonggwaPct+'%', '', '', '', fmt(Math.round(c.gonggwa))], isIndirect: true });
-    tableData.push({ content: ['', '운영비 '+c.unyoungPct+'%', '', '', '', fmt(Math.round(c.unyoung))], isIndirect: true });
-    tableData.push({ content: ['', '기업이윤 '+c.iikPct+'%', '', '', '', fmt(Math.round(c.iik))], isIndirect: true });
-    tableData.push({ content: ['', '총합계 (부가세별도)', '', '', '', fmt(r.finalPrice)], isTotal: true });
+    if (c.gonguPct > 0) itemsHtml += `<tr class="ind"><td></td><td>공구손료 ${c.gonguPct}%</td><td></td><td></td><td></td><td class="r">${fmt(Math.round(c.gongu))}</td></tr>`;
+    itemsHtml += `<tr class="ind"><td></td><td>공과잡비 ${c.gonggwaPct}%</td><td></td><td></td><td></td><td class="r">${fmt(Math.round(c.gonggwa))}</td></tr>`;
+    itemsHtml += `<tr class="ind"><td></td><td>운영비 ${c.unyoungPct}%</td><td></td><td></td><td></td><td class="r">${fmt(Math.round(c.unyoung))}</td></tr>`;
+    itemsHtml += `<tr class="ind"><td></td><td>기업이윤 ${c.iikPct}%</td><td></td><td></td><td></td><td class="r">${fmt(Math.round(c.iik))}</td></tr>`;
+    itemsHtml += `<tr class="tot"><td></td><td>총합계 (부가세별도)</td><td></td><td></td><td></td><td class="r">${fmt(r.finalPrice)}</td></tr>`;
     
-    // Build autoTable body
-    const bodyRows = tableData.map(row => {
-      if (row.content) return row.content;
-      return row;
-    });
-    
-    doc.autoTable({
-      startY: y,
-      head: [['구분', '세부품목', '수량', '단가', '일수', '합계']],
-      body: bodyRows,
-      styles: { fontSize: 8, cellPadding: 2, font: 'helvetica' },
-      headStyles: { fillColor: [60, 60, 80], textColor: 255 },
-      columnStyles: {
-        0: { cellWidth: 20 },
-        2: { halign: 'right', cellWidth: 15 },
-        3: { halign: 'right', cellWidth: 25 },
-        4: { halign: 'right', cellWidth: 12 },
-        5: { halign: 'right', cellWidth: 28 },
-      },
-      didParseCell: function(data) {
-        const rowData = tableData[data.row.index];
-        if (rowData && rowData.isSubtotal) {
-          data.cell.styles.fontStyle = 'bold';
-          data.cell.styles.fillColor = [240, 240, 245];
-        }
-        if (rowData && rowData.isTotal) {
-          data.cell.styles.fontStyle = 'bold';
-          data.cell.styles.fillColor = [50, 50, 70];
-          data.cell.styles.textColor = 255;
-        }
-      },
-    });
-    
-    const fileName = `레터스_기업이사_${r.customerName}_견적서_${today.getFullYear()}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}.pdf`;
-    doc.save(fileName);
-    
-    hideLoading();
-    showToast('📥 PDF 다운로드 완료');
-  } catch(e) {
-    hideLoading();
-    alert('PDF 생성 오류: ' + e.message);
-    console.error(e);
-  }
+    // Create hidden render container
+    const container = document.createElement('div');
+    container.style.cssText = 'position:fixed;left:-9999px;top:0;width:800px;background:#fff;padding:40px;font-family:"Noto Sans KR",sans-serif;color:#000;';
+    container.innerHTML = `
+      <h1 style="text-align:center;font-size:28px;margin-bottom:30px;letter-spacing:8px;">견 적 서</h1>
+      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px;">
+        <span>레터스 (LETUS)</span><span>Tel: 010-5604-4150</span>
+      </div>
+      <div style="font-size:11px;margin-bottom:12px;">경기도 용인시 처인구 양지면 남평로 111-73 10층</div>
+      <div style="font-size:13px;margin-bottom:6px;">견적일자 : ${dateStr}</div>
+      <div style="font-size:13px;margin-bottom:20px;">고객사 : ${r.customerName}</div>
+      <table style="width:100%;border-collapse:collapse;font-size:11px;">
+        <thead><tr style="background:#3c3c50;color:#fff;">
+          <th style="padding:6px;text-align:left;width:14%;">구분</th>
+          <th style="padding:6px;text-align:left;">세부품목</th>
+          <th style="padding:6px;text-align:right;width:8%;">수량</th>
+          <th style="padding:6px;text-align:right;width:14%;">단가</th>
+          <th style="padding:6px;text-align:right;width:6%;">일수</th>
+          <th style="padding:6px;text-align:right;width:16%;">합계</th>
+        </tr></thead>
+        <tbody>${itemsHtml}</tbody>
+      </table>
+      <style>
+        table td { padding:4px 6px; border-bottom:1px solid #eee; }
+        .r { text-align:right; }
+        .sub td { font-weight:600; background:#f0f0f5; border-bottom:2px solid #ccc; }
+        .ind td { color:#555; }
+        .tot td { font-weight:700; background:#32324a; color:#fff; font-size:13px; padding:8px 6px; }
+      </style>
+
+```
+`;
+document.body.appendChild(container);
+
+// Wait for fonts to render
+await new Promise(r => setTimeout(r, 300));
+
+// Capture with html2canvas
+const canvas = await html2canvas(container, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
+document.body.removeChild(container);
+
+// Create PDF from canvas
+const { jsPDF } = window.jspdf;
+const imgWidth = 210; // A4 width in mm
+const imgHeight = (canvas.height * imgWidth) / canvas.width;
+const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
+
+const imgData = canvas.toDataURL('image/jpeg', 0.95);
+doc.addImage(imgData, 'JPEG', 0, 0, imgWidth, imgHeight);
+
+const fileName = `레터스_견적서_${r.customerName}_${today.getFullYear()}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}.pdf`;
+doc.save(fileName);
+
+hideLoading();
+showToast('📥 PDF 다운로드 완료');
+```
+
+} catch(e) {
+hideLoading();
+alert(’PDF 생성 오류: ’ + e.message);
+console.error(e);
+}
 }
 
 // ============================================================
 // Email
 // ============================================================
 function sendEmail() {
-  const r = letusResult;
-  const subject = encodeURIComponent(`[레터스] ${r.customerName} 기업이사 견적서 전달의 건`);
-  
-  const body = encodeURIComponent(
-    `${r.customerName} 담당자님께,\n\n` +
-    `안녕하세요 담당자님!\n레터스입니다.\n\n` +
-    `현장 확인한 내용 토대로, 기업이사 서비스 견적 전달 드립니다.\n\n` +
-    `레터스는 퍼시스그룹의 40년 가구 공간 노하우를 바탕으로, 안전하고 정확한 서비스를 제공하고 있습니다.\n\n` +
-    `견적서를 첨부 파일로 보내드리니 확인 부탁드립니다.\n\n` +
-    `문의사항이나 조율 필요한 부분 있으시면 언제든 연락 부탁드립니다.\n\n` +
-    `감사합니다.\n박가영 드림`
-  );
-  
-  window.location.href = `mailto:${r.customerEmail}?subject=${subject}&body=${body}`;
-  showToast('📧 메일 앱이 열립니다. PDF를 첨부해주세요.');
+const r = letusResult;
+const subject = encodeURIComponent(`[레터스] ${r.customerName} 기업이사 견적서 전달의 건`);
+
+const body = encodeURIComponent(
+`${r.customerName} 담당자님께,\n\n` +
+`안녕하세요 담당자님!\n레터스입니다.\n\n` +
+`현장 확인한 내용 토대로, 기업이사 서비스 견적 전달 드립니다.\n\n` +
+`레터스는 퍼시스그룹의 40년 가구 공간 노하우를 바탕으로, 안전하고 정확한 서비스를 제공하고 있습니다.\n\n` +
+`견적서를 첨부 파일로 보내드리니 확인 부탁드립니다.\n\n` +
+`문의사항이나 조율 필요한 부분 있으시면 언제든 연락 부탁드립니다.\n\n` +
+`감사합니다.\n박가영 드림`
+);
+
+window.location.href = `mailto:${r.customerEmail}?subject=${subject}&body=${body}`;
+showToast(‘📧 메일 앱이 열립니다. PDF를 첨부해주세요.’);
 }
 </script>
 
 </body>
 </html>
-

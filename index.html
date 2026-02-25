@@ -87,7 +87,6 @@ box-shadow: 0 0 40px var(–primary-glow);
 }
 .upload-zone .icon { font-size: 48px; margin-bottom: 16px; }
 .upload-zone p { color: var(–text-dim); margin-bottom: 16px; font-size: 14px; }
-.upload-zone input[type=file] { display: none; }
 .upload-btn {
 display: inline-block;
 background: var(–primary);
@@ -280,8 +279,8 @@ margin-bottom: 16px;
   <div class="upload-zone" id="dropZone">
     <div class="icon">📄</div>
     <p>협력사 견적서 엑셀 파일을<br>업로드하세요</p>
-    <label class="upload-btn" for="fileInput">파일 선택</label>
-    <input type="file" id="fileInput" accept=".xlsx,.xls,.xlsm">
+    <button class="upload-btn" id="uploadBtn" type="button">파일 선택</button>
+    <input type="file" id="fileInput" accept=".xlsx,.xls,.xlsm" style="display:none;">
   </div>
 
   <div class="card">
@@ -425,8 +424,16 @@ function truncPrice(price, unit) {
 // ============================================================
 const dropZone = document.getElementById('dropZone');
 const fileInput = document.getElementById('fileInput');
+const uploadBtn = document.getElementById('uploadBtn');
 
-dropZone.addEventListener('click', () => fileInput.click());
+uploadBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  fileInput.click();
+});
+dropZone.addEventListener('click', (e) => {
+  if (e.target === uploadBtn) return;
+  fileInput.click();
+});
 dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
 dropZone.addEventListener('drop', e => {
